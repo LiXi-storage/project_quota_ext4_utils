@@ -1,0 +1,13 @@
+Index: quota-tools.git/quotasys.c
+===================================================================
+--- quota-tools.git.orig/quotasys.c
++++ quota-tools.git/quotasys.c
+@@ -532,7 +532,7 @@ const char *str2number(const char *strin
+ 		return _("Unknown decimal unit. "
+ 			"Valid units are k, m, g, t.");
+ 	if (number > QSIZE_MAX / multiple ||
+-	    -number < QSIZE_MAX / multiple)
++	    number < -(QSIZE_MAX / multiple))
+ 		return _("Integer overflow while interpreting decimal unit.");
+ 	*inodes = number * multiple;
+ 	return NULL;

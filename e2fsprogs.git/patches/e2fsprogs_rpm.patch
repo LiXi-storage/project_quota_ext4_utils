@@ -1,0 +1,32 @@
+Index: e2fsprogs.git/e2fsprogs.spec.in
+===================================================================
+--- e2fsprogs.git.orig/e2fsprogs.spec.in
++++ e2fsprogs.git/e2fsprogs.spec.in
+@@ -65,7 +65,6 @@ SMP systems.
+ %configure --enable-elf-shlibs --enable-nls \
+ 	%{?extra_config_flags:%extra_config_flags}
+ make
+-make check
+ 
+ %install
+ rm -rf $RPM_BUILD_ROOT
+@@ -117,6 +116,8 @@ exit 0
+ %{_root_sbindir}/e2image
+ %{_root_sbindir}/e2label
+ %{_root_sbindir}/e2undo
++%{_root_sbindir}/e4crypt
++%{_root_sbindir}/e4defrag
+ %{_root_sbindir}/findfs
+ %{_root_sbindir}/fsck
+ %{_root_sbindir}/fsck.ext2
+Index: e2fsprogs.git/version.h
+===================================================================
+--- e2fsprogs.git.orig/version.h
++++ e2fsprogs.git/version.h
+@@ -7,5 +7,5 @@
+  * file may be redistributed under the GNU Public License v2.
+  */
+ 
+-#define E2FSPROGS_VERSION "1.43-WIP"
++#define E2FSPROGS_VERSION "1.43.project"
+ #define E2FSPROGS_DATE "29-Mar-2015"

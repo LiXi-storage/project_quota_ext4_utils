@@ -1,0 +1,207 @@
+Index: e2fsprogs.git/lib/e2p/ls.c
+===================================================================
+--- e2fsprogs.git.orig/lib/e2p/ls.c
++++ e2fsprogs.git/lib/e2p/ls.c
+@@ -210,6 +210,7 @@ static const char *checksum_type(__u8 ty
+ static const char const *quota_prefix[MAXQUOTAS] = {
+         [USRQUOTA] = "User quota inode:",
+         [GRPQUOTA] = "Group quota inode:",
++        [PRJQUOTA] = "Project quota inode:",
+ };
+ 
+ /**
+Index: e2fsprogs.git/lib/quota/mkquota.c
+===================================================================
+--- e2fsprogs.git.orig/lib/quota/mkquota.c
++++ e2fsprogs.git/lib/quota/mkquota.c
+@@ -231,6 +231,12 @@ static int dict_uint_cmp(const void *a, 
+ 
+ static inline qid_t get_qid(struct ext2_inode *inode, enum quota_type qtype)
+ {
++	struct ext2_inode_large *large_inode;
++	//int is_large_inode = 0;
++
++	//if (EXT2_INODE_SIZE(current_fs->super) > EXT2_GOOD_OLD_INODE_SIZE)
++	//	is_large_inode = 1;
++
+ 	assert(qtype >= 0);
+ 	assert(qtype < MAXQUOTAS);
+ 	switch (qtype) {
+@@ -238,6 +244,11 @@ static inline qid_t get_qid(struct ext2_
+ 			return inode_uid(*inode);
+ 		case GRPQUOTA:
+ 			return inode_gid(*inode);
++		case PRJQUOTA:
++			large_inode = (struct ext2_inode_large *) inode;
++			assert(//is_large_inode &&
++			       large_inode->i_extra_isize >= 32);
++			return inode_gid(*inode); //XXX
+ 		default:
+ 			return 0;
+ 	}
+Index: e2fsprogs.git/lib/quota/quotaio.c
+===================================================================
+--- e2fsprogs.git.orig/lib/quota/quotaio.c
++++ e2fsprogs.git/lib/quota/quotaio.c
+@@ -20,7 +20,11 @@
+ #include "common.h"
+ #include "quotaio.h"
+ 
+-static const char * const extensions[MAXQUOTAS] = {"user", "group"};
++static const char * const extensions[MAXQUOTAS] = {
++	[USRQUOTA] = "user",
++	[GRPQUOTA] = "group",
++	[PRJQUOTA] = "project",
++};
+ static const char * const basenames[] = {
+ 	"",		/* undefined */
+ 	"quota",	/* QFMT_VFS_OLD */
+@@ -56,6 +60,9 @@ ext2_ino_t quota_type2inum(enum quota_ty
+ 	case GRPQUOTA:
+ 		return EXT4_GRP_QUOTA_INO;
+ 		break;
++	case PRJQUOTA:
++		return EXT4_PRJ_QUOTA_INO;
++		break;
+ 	default:
+ 		return 0;
+ 		break;
+Index: e2fsprogs.git/lib/quota/quotaio.h
+===================================================================
+--- e2fsprogs.git.orig/lib/quota/quotaio.h
++++ e2fsprogs.git/lib/quota/quotaio.h
+@@ -47,9 +47,10 @@ typedef int64_t qsize_t;	/* Type in whic
+ enum quota_type {
+ 	USRQUOTA = 0,
+ 	GRPQUOTA = 1,
++	PRJQUOTA = 2,
+ };
+ 
+-#define MAXQUOTAS 2
++#define MAXQUOTAS 3
+ 
+ #if MAXQUOTAS > 32
+ #error "cannot have more than 32 quota types to fit in qtype_bits"
+@@ -57,7 +58,8 @@ enum quota_type {
+ 
+ #define QUOTA_USR_BIT (1 << USRQUOTA)
+ #define QUOTA_GRP_BIT (1 << GRPQUOTA)
+-#define QUOTA_ALL_BIT (QUOTA_USR_BIT | QUOTA_GRP_BIT)
++#define QUOTA_PRJ_BIT (1 << PRJQUOTA)
++#define QUOTA_ALL_BIT (QUOTA_USR_BIT | QUOTA_GRP_BIT | QUOTA_PRJ_BIT)
+ 
+ typedef struct quota_ctx *quota_ctx_t;
+ 
+@@ -72,7 +74,8 @@ struct quota_ctx {
+  */
+ #define INITQMAGICS {\
+ 	0xd9c01f11,	/* USRQUOTA */\
+-	0xd9c01927	/* GRPQUOTA */\
++	0xd9c01927,	/* GRPQUOTA */\
++	0xd9c03f14      /* PRJQUOTA */\
+ }
+ 
+ /* Size of blocks in which are counted size limits in generic utility parts */
+@@ -246,6 +249,8 @@ static inline ext2_ino_t *quota_sb_inump
+ 			return &sb->s_usr_quota_inum;
+ 		case GRPQUOTA:
+ 			return &sb->s_grp_quota_inum;
++		case PRJQUOTA:
++			return &sb->s_prj_quota_inum;
+ 		default:
+ 			return NULL;
+ 	}
+Index: e2fsprogs.git/debugfs/set_fields.c
+===================================================================
+--- e2fsprogs.git.orig/debugfs/set_fields.c
++++ e2fsprogs.git/debugfs/set_fields.c
+@@ -150,6 +150,7 @@ static struct field_set_info super_field
+ 	{ "mount_opts",  &set_sb.s_mount_opts, NULL, 64, parse_string },
+ 	{ "usr_quota_inum", &set_sb.s_usr_quota_inum, NULL, 4, parse_uint },
+ 	{ "grp_quota_inum", &set_sb.s_grp_quota_inum, NULL, 4, parse_uint },
++	{ "prj_quota_inum", &set_sb.s_prj_quota_inum, NULL, 4, parse_uint },
+ 	{ "overhead_blocks", &set_sb.s_overhead_blocks, NULL, 4, parse_uint },
+ 	{ "backup_bgs", &set_sb.s_backup_bgs[0], NULL, 4, parse_uint,
+ 	  FLAG_ARRAY, 2 },
+Index: e2fsprogs.git/misc/tune2fs.c
+===================================================================
+--- e2fsprogs.git.orig/misc/tune2fs.c
++++ e2fsprogs.git/misc/tune2fs.c
+@@ -1505,6 +1505,10 @@ static void parse_quota_opts(const char 
+ 			quota_enable[GRPQUOTA] = QOPT_ENABLE;
+ 		} else if (strcmp(token, "^grpquota") == 0) {
+ 			quota_enable[GRPQUOTA] = QOPT_DISABLE;
++		} else if (strcmp(token, "prjquota") == 0) {
++			quota_enable[PRJQUOTA] = QOPT_ENABLE;
++		} else if (strcmp(token, "^prjquota") == 0) {
++			quota_enable[PRJQUOTA] = QOPT_DISABLE;
+ 		} else {
+ 			fputs(_("\nBad quota options specified.\n\n"
+ 				"Following valid quota options are available "
+Index: e2fsprogs.git/misc/mke2fs.c
+===================================================================
+--- e2fsprogs.git.orig/misc/mke2fs.c
++++ e2fsprogs.git/misc/mke2fs.c
+@@ -1015,6 +1015,8 @@ static void parse_extended_opts(struct e
+ 				quotatype_bits = QUOTA_USR_BIT;
+ 			} else if (!strncmp(arg, "grp", 3)) {
+ 				quotatype_bits = QUOTA_GRP_BIT;
++			} else if (!strncmp(arg, "prj", 3)) {
++				quotatype_bits = QUOTA_PRJ_BIT;
+ 			} else {
+ 				fprintf(stderr,
+ 					_("Invalid quotatype parameter: %s\n"),
+@@ -2375,6 +2377,10 @@ profile_error:
+ 		exit(1);
+ 	}
+ 
++	/* Need to deciede which inode number to use for system file */
++	//if (fs_param.s_feature_ro_compat & EXT4_FEATURE_RO_COMPAT_PROJECT)
++	//	fs_param.s_first_ino = EXT4_PRJ_QUOTA_INO + 1;
++
+ 	/* Make sure number of inodes specified will fit in 32 bits */
+ 	if (num_inodes == 0) {
+ 		unsigned long long n;
+Index: e2fsprogs.git/lib/ext2fs/ext2_fs.h
+===================================================================
+--- e2fsprogs.git.orig/lib/ext2fs/ext2_fs.h
++++ e2fsprogs.git/lib/ext2fs/ext2_fs.h
+@@ -52,6 +52,7 @@
+ #define EXT2_JOURNAL_INO	 8	/* Journal inode */
+ #define EXT2_EXCLUDE_INO	 9	/* The "exclude" inode, for snapshots */
+ #define EXT4_REPLICA_INO	10	/* Used by non-upstream feature */
++#define EXT4_PRJ_QUOTA_INO	11	/* Project quota inode */
+ 
+ /* First non-reserved inode for old ext2 filesystems */
+ #define EXT2_GOOD_OLD_FIRST_INO	11
+@@ -473,6 +474,7 @@ struct ext2_inode_large {
+ 	__u32	i_crtime;	/* File creation time */
+ 	__u32	i_crtime_extra;	/* extra File creation time (nsec << 2 | epoch)*/
+ 	__u32	i_version_hi;	/* high 32 bits for 64-bit version */
++	__u32   i_projid;       /* Project ID */
+ };
+ 
+ #define EXT4_INODE_CSUM_HI_EXTRA_END	\
+@@ -717,7 +719,8 @@ struct ext2_super_block {
+ 	__u8	s_encrypt_algos[4];	/* Encryption algorithms in use  */
+ 	__u8	s_encrypt_pw_salt[16];	/* Salt used for string2key algorithm */
+ 	__le32	s_lpf_ino;		/* Location of the lost+found inode */
+-	__le32	s_reserved[100];	/* Padding to the end of the block */
++	__u32   s_prj_quota_inum;	/* inode number of project quota file */
++	__le32	s_reserved[99];		/* Padding to the end of the block */
+ 	__u32	s_checksum;		/* crc32c(superblock) */
+ };
+ 
+Index: e2fsprogs.git/lib/ext2fs/swapfs.c
+===================================================================
+--- e2fsprogs.git.orig/lib/ext2fs/swapfs.c
++++ e2fsprogs.git/lib/ext2fs/swapfs.c
+@@ -320,6 +320,8 @@ void ext2fs_swap_inode_full(ext2_filsys 
+ 		t->i_crtime_extra = ext2fs_swab32(f->i_crtime_extra);
+ 	if (extra_isize >= 28)
+ 		t->i_version_hi = ext2fs_swab32(f->i_version_hi);
++	if (extra_isize >= 32)
++		t->i_projid = ext2fs_swab32(f->i_projid);
+ 
+ 	i = sizeof(struct ext2_inode) + extra_isize + sizeof(__u32);
+ 	if (bufsize < (int) i)

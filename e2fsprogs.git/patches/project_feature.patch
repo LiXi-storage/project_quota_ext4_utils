@@ -1,0 +1,83 @@
+Index: e2fsprogs.git/lib/ext2fs/ext2_fs.h
+===================================================================
+--- e2fsprogs.git.orig/lib/ext2fs/ext2_fs.h
++++ e2fsprogs.git/lib/ext2fs/ext2_fs.h
+@@ -792,6 +792,7 @@ struct ext2_super_block {
+ #define EXT4_FEATURE_RO_COMPAT_METADATA_CSUM	0x0400
+ #define EXT4_FEATURE_RO_COMPAT_REPLICA		0x0800
+ #define EXT4_FEATURE_RO_COMPAT_READONLY		0x1000
++#define EXT4_FEATURE_RO_COMPAT_PROJECT		0x2000 /* Project quota */
+ 
+ 
+ #define EXT2_FEATURE_INCOMPAT_COMPRESSION	0x0001
+Index: e2fsprogs.git/misc/ext4.5.in
+===================================================================
+--- e2fsprogs.git.orig/misc/ext4.5.in
++++ e2fsprogs.git/misc/ext4.5.in
+@@ -214,6 +214,11 @@ shared storage environments.
+ @QUOTA_MAN_COMMENT@group.quota which existed
+ @QUOTA_MAN_COMMENT@in the older quota design) to be hidden inodes.
+ .TP
++.B project
++.br
++This ext4 feature provides project quota support. With this feature,
++the project ID of inode will be managed when the filesystem is mounted.
++.TP
+ .B resize_inode
+ .br
+ This file system feature indicates that space has been reserved so
+Index: e2fsprogs.git/misc/mke2fs.c
+===================================================================
+--- e2fsprogs.git.orig/misc/mke2fs.c
++++ e2fsprogs.git/misc/mke2fs.c
+@@ -1091,7 +1091,8 @@ static __u32 ok_features[3] = {
+ #ifdef CONFIG_QUOTA
+ 		EXT4_FEATURE_RO_COMPAT_QUOTA|
+ #endif
+-		EXT4_FEATURE_RO_COMPAT_METADATA_CSUM
++		EXT4_FEATURE_RO_COMPAT_METADATA_CSUM|
++		EXT4_FEATURE_RO_COMPAT_PROJECT
+ };
+ 
+ 
+Index: e2fsprogs.git/misc/tune2fs.c
+===================================================================
+--- e2fsprogs.git.orig/misc/tune2fs.c
++++ e2fsprogs.git/misc/tune2fs.c
+@@ -162,7 +162,8 @@ static __u32 ok_features[3] = {
+ 		EXT4_FEATURE_RO_COMPAT_QUOTA |
+ #endif
+ 		EXT4_FEATURE_RO_COMPAT_METADATA_CSUM |
+-		EXT4_FEATURE_RO_COMPAT_READONLY
++		EXT4_FEATURE_RO_COMPAT_READONLY |
++		EXT4_FEATURE_RO_COMPAT_PROJECT
+ };
+ 
+ static __u32 clear_ok_features[3] = {
+Index: e2fsprogs.git/lib/e2p/feature.c
+===================================================================
+--- e2fsprogs.git.orig/lib/e2p/feature.c
++++ e2fsprogs.git/lib/e2p/feature.c
+@@ -70,6 +70,8 @@ static struct feature feature_list[] = {
+ 			"replica" },
+ 	{	E2P_FEATURE_RO_INCOMPAT, EXT4_FEATURE_RO_COMPAT_READONLY,
+ 			"read-only" },
++	{	E2P_FEATURE_RO_INCOMPAT, EXT4_FEATURE_RO_COMPAT_PROJECT,
++			"project"},
+ 
+ 	{	E2P_FEATURE_INCOMPAT, EXT2_FEATURE_INCOMPAT_COMPRESSION,
+ 			"compression" },
+Index: e2fsprogs.git/lib/ext2fs/ext2fs.h
+===================================================================
+--- e2fsprogs.git.orig/lib/ext2fs/ext2fs.h
++++ e2fsprogs.git/lib/ext2fs/ext2fs.h
+@@ -589,7 +589,8 @@ typedef struct ext2_icount *ext2_icount_
+ 					 EXT4_FEATURE_RO_COMPAT_BIGALLOC|\
+ 					 EXT4_LIB_RO_COMPAT_QUOTA|\
+ 					 EXT4_FEATURE_RO_COMPAT_METADATA_CSUM|\
+-					 EXT4_FEATURE_RO_COMPAT_READONLY)
++					 EXT4_FEATURE_RO_COMPAT_READONLY|\
++					 EXT4_FEATURE_RO_COMPAT_PROJECT)
+ 
+ /*
+  * These features are only allowed if EXT2_FLAG_SOFTSUPP_FEATURES is passed

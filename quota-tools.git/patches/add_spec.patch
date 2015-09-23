@@ -1,0 +1,69 @@
+Index: quota-tools.git/quota-tools.spec
+===================================================================
+--- /dev/null
++++ quota-tools.git/quota-tools.spec
+@@ -0,0 +1,64 @@
++Name:          quota-tools
++Version:       4.01
++Release:       project
++Summary:       User space tools for the Linux Diskquota system as part of the Linux kernel
++Group:         System/Tools
++Vendor:        project
++Distribution:  project
++Packager:      Silvan Calarco <silvan.calarco@...>
++URL:           http://sourceforge.net/projects/linuxquota/
++Source:        http://downloads.sourceforge.net/sourceforge/linuxquota/quota-%{version}.tar.gz
++License:       GPL
++BuildRequires: gettext-devel >= 0.14.1
++BuildRoot:     %{_tmppath}/%{name}-%{version}-root
++
++%description
++User space tools for the Linux Diskquota system as part of the Linux kernel.
++
++%prep
++[ "%{buildroot}" != / ] && rm -rf "%{buildroot}"
++
++%setup -q -n quota-tools
++
++%build
++%configure
++
++%install
++%makeinstall
++
++# delete headers because they are already in glibc-devel
++rm -f %{buildroot}%{_includedir}/rpcsvc/*
++#mv %{buildroot}%{_mandir}/man2/quotactl.2 %{buildroot}%{_mandir}/man2/quotactl-quotatools.2
++
++%find_lang quota
++
++%clean
++[ "%{buildroot}" != / ] && rm -rf "%{buildroot}"
++
++%files -f quota.lang
++%defattr(-,root,root)
++%dir %{_sysconfdir}/*
++%{_sysconfdir}/*
++%{_sbindir}/*
++%{_bindir}/*
++%{_mandir}/man1/*
++%{_mandir}/man3/*
++%{_mandir}/man5/*
++%{_mandir}/man8/*
++
++%changelog
++* Tue Jul 15 2014 Data Direct Networks <lixi@...> 4.01-project
++- update to master branch
++- add quota support
++
++* Fri Jul 12 2013 Automatic Build System <autodist@...> 4.01-1mamba
++- update to 4.01
++
++* Tue Jan 27 2009 Silvan Calarco <silvan.calarco@...> 3.17-1mamba
++- automatic update by autodist
++
++* Fri Sep 21 2007 Silvan Calarco <silvan.calarco@...> 3.15-1mamba
++- update to 3.15
++
++* Wed May 06 2004 Silvan Calarco <silvan.calarco@...> 3.11-1qilnx
++- first build

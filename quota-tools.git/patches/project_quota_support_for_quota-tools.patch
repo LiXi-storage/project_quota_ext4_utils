@@ -1,0 +1,1380 @@
+Index: quota-tools.git/config.h.in
+===================================================================
+--- quota-tools.git.orig/config.h.in
++++ quota-tools.git/config.h.in
+@@ -1,8 +1,5 @@
+ /* config.h.in.  Generated from configure.in by autoheader.  */
+ 
+-/* Alternative file format of edquota */
+-#undef ALT_FORMAT
+-
+ /* File with mounted filesystems */
+ #undef ALT_MTAB
+ 
+@@ -66,6 +63,9 @@
+ /* Define to the one symbol short name of this package. */
+ #undef PACKAGE_TARNAME
+ 
++/* Define to the home page for this package. */
++#undef PACKAGE_URL
++
+ /* Version of quota tools */
+ #undef PACKAGE_VERSION
+ 
+Index: quota-tools.git/edquota.8
+===================================================================
+--- quota-tools.git.orig/edquota.8
++++ quota-tools.git/edquota.8
+@@ -8,7 +8,8 @@ edquota \- edit user quotas
+ .I protoname
+ ] [
+ .BR \-u \ |
+-.B \-g
++.B \-g \ |
++.B \-P
+ ] [
+ .B \-rm
+ ] [
+@@ -23,7 +24,8 @@ edquota \- edit user quotas
+ .B edquota
+ [
+ .BR \-u \ |
+-.B \-g
++.B \-g \ |
++.B \-P
+ ] [
+ .B \-F
+ .I format-name
+@@ -36,7 +38,8 @@ edquota \- edit user quotas
+ .B edquota
+ [
+ .BR \-u \ |
+-.B \-g
++.B \-g \ |
++.B \-P
+ ] [
+ .B \-F
+ .I format-name
+@@ -119,6 +122,9 @@ Edit the user quota. This is the default
+ .B -g, --group
+ Edit the group quota.
+ .TP
++.B -P, --project
++Edit the project quota.
++.TP
+ .B -p, --prototype=\f2protoname\f1
+ Duplicate the quotas of the prototypical user
+ specified for each user specified.  This is the normal
+@@ -156,17 +162,17 @@ are understood. Time limits are printed 
+ the value is greater than or equal to one.
+ .TP
+ .B \-T, --edit-times
+-Edit time for the user/group when softlimit is enforced. Possible values
++Edit time for the user/group/project when softlimit is enforced. Possible values
+ are 'unset' or number and unit. Units are the same as in
+ .B \-t
+ option.
+ .SH FILES
+ .PD 0
+ .TP 20
+-.BR aquota.user " or " aquota.group
++.BR aquota.user ", " aquota.group " or " aquota.project
+ quota file at the filesystem root (version 2 quota, non-XFS filesystems)
+ .TP
+-.BR quota.user " or " quota.group
++.BR quota.user ", " quota.group " or " aquota.project
+ quota file at the filesystem root (version 1 quota, non-XFS filesystems)
+ .TP
+ .B /etc/mtab
+Index: quota-tools.git/edquota.c
+===================================================================
+--- quota-tools.git.orig/edquota.c
++++ quota-tools.git/edquota.c
+@@ -80,11 +80,14 @@ static void usage(void)
+ #endif
+ 	errstr(_("Usage:\n\tedquota %1$s[-u] [-F formatname] [-p username] [-f filesystem] username ...\n\
+ \tedquota %1$s-g [-F formatname] [-p groupname] [-f filesystem] groupname ...\n\
+-\tedquota [-u|g] [-F formatname] [-f filesystem] -t\n\
+-\tedquota [-u|g] [-F formatname] [-f filesystem] -T username|groupname ...\n"), rpcflag);
++\tedquota %1$s-P [-F formatname] [-p groupname] [-f filesystem] groupname ...\n\
++\tedquota [-u|g|-P] [-F formatname] [-f filesystem] -t\n\
++\tedquota [-u|g|-P] [-F formatname] [-f filesystem] -T username|groupname ...\n"), rpcflag);
+ 	fputs(_("\n\
+ -u, --user                    edit user data\n\
+--g, --group                   edit group data\n"), stderr);
++-g, --group                   edit group data\n\
++-P, --project                 edit project data\n\
++"), stderr);
+ #if defined(RPC_SETQUOTA)
+ 	fputs(_("-r, --remote                  edit remote quota (via RPC)\n\
+ -m, --no-mixed-pathnames      trim leading slashes from NFSv4 mountpoints\n"), stderr);
+@@ -111,6 +114,7 @@ static int parse_options(int argc, char 
+ 		{ "prototype", 1, NULL, 'p' },
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "format", 1, NULL, 'F' },
+ 		{ "filesystem", 1, NULL, 'f' },
+ #if defined(RPC_SETQUOTA)
+@@ -128,9 +132,9 @@ static int parse_options(int argc, char 
+ 
+ 	quotatype = USRQUOTA;
+ #if defined(RPC_SETQUOTA)
+-	while ((ret = getopt_long(argc, argv, "ughrmntTVp:F:f:", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argc, argv, "ugPhrmntTVp:F:f:", long_opts, NULL)) != -1) {
+ #else
+-	while ((ret = getopt_long(argc, argv, "ughtTVp:F:f:", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argc, argv, "ugPhtTVp:F:f:", long_opts, NULL)) != -1) {
+ #endif
+ 		switch (ret) {
+ 		  case 'p':
+@@ -139,6 +143,9 @@ static int parse_options(int argc, char 
+ 		  case 'g':
+ 			  quotatype = GRPQUOTA;
+ 			  break;
++		  case 'P':
++			  quotatype = PRJQUOTA;
++			  break;
+ #if defined(RPC_SETQUOTA)
+ 		  case 'n':
+ 		  case 'r':
+Index: quota-tools.git/mntopt.h
+===================================================================
+--- quota-tools.git.orig/mntopt.h
++++ quota-tools.git/mntopt.h
+@@ -28,6 +28,7 @@
+ #define MNTOPT_USRJQUOTA	"usrjquota"	/* enforce user quota */
+ #define MNTOPT_GRPQUOTA		"grpquota"	/* enforce group quota */
+ #define MNTOPT_GRPJQUOTA	"grpjquota"	/* enforce group quota */
++#define MNTOPT_PRJJQUOTA	"prjjquota"	/* enforce project quota */
+ #define MNTOPT_RSQUASH		"rsquash"	/* root as ordinary user */
+ #define MNTOPT_BIND		"bind"		/* binded mount */
+ #define MNTOPT_LOOP		"loop"		/* loopback mount */
+Index: quota-tools.git/quota.1
+===================================================================
+--- quota-tools.git.orig/quota.1
++++ quota-tools.git/quota.1
+@@ -7,7 +7,7 @@ quota \- display disk usage and limits
+ .B -F
+ .I format-name
+ ] [
+-.B -guqvswi
++.B -guPqvswi
+ ] [
+ .BR -l \ |
+ [
+@@ -47,6 +47,20 @@ quota \- display disk usage and limits
+ .B -F
+ .I format-name
+ ] [
++.B -qvswi
++] [
++.BR -l \ |
++[
++.BR -QAm
++]]
++.B -P
++.IR project ...
++.br
++.B quota
++[
++.B -F
++.I format-name
++] [
+ .B -qvswugQm
+ ]
+ .B -f
+@@ -88,6 +102,13 @@ argument(s) restricts the display to the
+ .B -u, --user
+ flag is equivalent to the default.
+ .TP
++.B -P, --project
++Print project quotas for the project
++of which the inode is a member.
++The optional
++.B project
++argument(s) restricts the display to the specified project(s).
++.TP
+ .B -v, --verbose
+ will display quotas on filesystems
+ where no storage is allocated.
+@@ -184,7 +205,7 @@ are over quota.
+ .SH FILES
+ .PD 0
+ .TP 20
+-.B aquota.user " or " aquota.group
++.B aquota.user ", " aquota.group " or " aquota.project
+ quota file at the filesystem root (version 2 quota, non-XFS filesystems)
+ .TP 20
+ .B quota.user " or " quota.group
+Index: quota-tools.git/quota.c
+===================================================================
+--- quota-tools.git.orig/quota.c
++++ quota-tools.git/quota.c
+@@ -75,6 +75,7 @@
+ #define FL_NO_MIXED_PATHS 8192
+ #define FL_SHOW_MNTPOINT 16384
+ #define FL_SHOW_DEVICE 32768
++#define FL_PROJECT 65536
+ 
+ static int flags, fmt = -1;
+ char *progname;
+@@ -82,13 +83,14 @@ char *progname;
+ static void usage(void)
+ {
+ 	errstr( "%s%s%s%s%s",
+-		_("Usage: quota [-guqvswim] [-l | [-Q | -A]] [-F quotaformat]\n"),
++		_("Usage: quota [-guPqvswim] [-l | [-Q | -A]] [-F quotaformat]\n"),
+ 		_("\tquota [-qvswim] [-l | [-Q | -A]] [-F quotaformat] -u username ...\n"),
+ 		_("\tquota [-qvswim] [-l | [-Q | -A]] [-F quotaformat] -g groupname ...\n"),
+-		_("\tquota [-qvswugQm] [-F quotaformat] -f filesystem ...\n"),
++		_("\tquota [-qvswugPQm] [-F quotaformat] -f filesystem ...\n"),
+ 		_("\n\
+ -u, --user                display quota for user\n\
+ -g, --group               display quota for group\n\
++-P, --project             display quota for project\n\
+ -q, --quiet               print more terse message\n\
+ -v, --verbose             print more verbose message\n\
+ -s, --human-readable      display numbers in human friendly units (MB, GB...)\n\
+@@ -297,12 +299,13 @@ int main(int argc, char **argv)
+ {
+ 	int ngroups;
+ 	gid_t gidset[NGROUPS], *gidsetp;
+-	int i, ret;
++	int i, ret, type = 0;
+ 	struct option long_opts[] = {
+ 		{ "help", 0, NULL, 'h' },
+ 		{ "version", 0, NULL, 'V' },
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "quiet", 0, NULL, 'q' },
+ 		{ "verbose", 0, NULL, 'v' },
+ 		{ "human-readable", 0, NULL, 's' },
+@@ -325,7 +328,7 @@ int main(int argc, char **argv)
+ 	progname = basename(argv[0]);
+ 
+ 	flags |= FL_SHOW_DEVICE;
+-	while ((ret = getopt_long(argc, argv, "hguqvsVliQF:wfApm", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argc, argv, "hguqvsPVliQF:wfApm", long_opts, NULL)) != -1) {
+ 		switch (ret) {
+ 		  case 'g':
+ 			  flags |= FL_GROUP;
+@@ -333,6 +336,9 @@ int main(int argc, char **argv)
+ 		  case 'u':
+ 			  flags |= FL_USER;
+ 			  break;
++		  case 'P':
++			  flags |= FL_PROJECT;
++			  break;
+ 		  case 'q':
+ 			  flags |= FL_QUIET;
+ 			  break;
+@@ -390,7 +396,7 @@ int main(int argc, char **argv)
+ 	argc -= optind;
+ 	argv += optind;
+ 
+-	if (!(flags & FL_USER) && !(flags & FL_GROUP))
++	if (!(flags & FL_USER) && !(flags & FL_GROUP) && !(flags & FL_PROJECT))
+ 		flags |= FL_USER;
+ 	if (flags & FL_FSLIST && flags & (FL_LOCALONLY | FL_NOAUTOFS))
+ 		errstr(_("Warning: Ignoring -%c when filesystem list specified.\n"), flags & FL_LOCALONLY ? 'l' : 'i');
+@@ -418,10 +424,19 @@ int main(int argc, char **argv)
+ 			for (i = 0; i < ngroups; i++)
+ 				ret |= showquotas(GRPQUOTA, gidsetp[i], argc, argv);
+ 		}
++		if (flags & FL_PROJECT) {
++			ret |= showquotas(PRJQUOTA, 0, argc, argv);
++		}
+ 		exit(ret);
+ 	}
+ 
+-	if ((flags & FL_USER) && (flags & FL_GROUP))
++	if (flags & FL_USER)
++		type++;
++	if (flags & FL_GROUP)
++		type++;
++	if (flags & FL_PROJECT)
++		type++;
++	if (type > 1)
+ 		usage();
+ 
+ 	if (flags & FL_USER)
+@@ -430,5 +445,8 @@ int main(int argc, char **argv)
+ 	else if (flags & FL_GROUP)
+ 		for (; argc > 0; argc--, argv++)
+ 			ret |= showquotas(GRPQUOTA, group2gid(*argv, !!(flags & FL_NUMNAMES), NULL), 0, NULL);
++	else if (flags & FL_PROJECT)
++		for (; argc > 0; argc--, argv++)
++			ret |= showquotas(PRJQUOTA, project2pid(*argv, !!(flags & FL_NUMNAMES), NULL), 0, NULL);
+ 	return ret;
+ }
+Index: quota-tools.git/quota.h
+===================================================================
+--- quota-tools.git.orig/quota.h
++++ quota-tools.git/quota.h
+@@ -8,9 +8,10 @@ typedef u_int32_t qid_t;	/* Type in whic
+ typedef int64_t qsize_t;	/* Type in which we store size limitations */
+ #define QSIZE_MAX INT64_MAX /* Maximum value storable in qsize_t */
+ 
+-#define MAXQUOTAS 2
++#define MAXQUOTAS 3
+ #define USRQUOTA  0		/* element used for user quotas */
+ #define GRPQUOTA  1		/* element used for group quotas */
++#define PRJQUOTA 2		/* element used for project quotas */
+ 
+ /*
+  * Definitions for the default names of the quotas files.
+@@ -20,6 +21,7 @@ typedef int64_t qsize_t;	/* Type in whic
+ #define INITQFNAMES { \
+ 	N_("user"),    /* USRQUOTA */ \
+ 	N_("group"),   /* GRPQUOTA */ \
++	N_("project"),   /* PRJQUOTA */ \
+ 	N_("undefined"), \
+ }
+ 
+@@ -28,7 +30,8 @@ typedef int64_t qsize_t;	/* Type in whic
+  */
+ #define INITQMAGICS {\
+ 	0xd9c01f11,	/* USRQUOTA */\
+-	0xd9c01927	/* GRPQUOTA */\
++	0xd9c01927,	/* GRPQUOTA */\
++	0xd9c03f14	/* PRJQUOTA */\
+ }
+ 
+ /* Size of blocks in which are counted size limits in generic utility parts */
+Index: quota-tools.git/quotacheck.8
+===================================================================
+--- quota-tools.git.orig/quotacheck.8
++++ quota-tools.git/quotacheck.8
+@@ -26,8 +26,9 @@ By default, only user quotas are checked
+ .B quotacheck
+ expects each filesystem to be checked to have quota files named
+ .I [a]quota.user
+-and
++,
+ .I [a]quota.group
++and aquota.project
+ located at the root of the associated filesystem.  If a file is not
+ present, 
+ .B quotacheck
+@@ -96,6 +97,11 @@ Only group quotas listed in
+ .I /etc/mtab
+ or on the filesystems specified are to be checked.
+ .TP
++.B -P, --project
++Only project quotas listed in
++.I /etc/mtab
++or on the filesystems specified are to be checked.
++.TP
+ .B -c, --create-files
+ Don't read existing quota files. Just perform a new scan and save it to disk.
+ .B quotacheck
+@@ -175,7 +181,7 @@ not allowed to read all the directories 
+ .SH FILES
+ .PD 0
+ .TP 15
+-.B aquota.user or aquota.group
++.B aquota.user, aquota.group or aquota.project
+ located at filesystem root with quotas (version 2 quota, non-XFS
+ filesystems)
+ .TP 15
+Index: quota-tools.git/quotacheck.c
+===================================================================
+--- quota-tools.git.orig/quotacheck.c
++++ quota-tools.git/quotacheck.c
+@@ -65,7 +65,7 @@ struct dirs {
+ static dev_t cur_dev;			/* Device we are working on */
+ static int files_done, dirs_done;
+ int flags, fmt = -1, cfmt;	/* Options from command line; Quota format to use spec. by user; Actual format to check */
+-static int uwant, gwant, ucheck, gcheck;	/* Does user want to check user/group quota; Do we check user/group quota? */
++static int uwant, gwant, pwant, ucheck, gcheck, pcheck;	/* Does user want to check user/group quota; Do we check user/group quota? */
+ static char *mntpoint;			/* Mountpoint to check */
+ char *progname;
+ struct util_dqinfo old_info[MAXQUOTAS];	/* Loaded infos */
+@@ -183,7 +183,8 @@ struct dquot *add_dquot(qid_t id, int ty
+ /*
+  * Add a number of blocks and inodes to a quota.
+  */
+-static void add_to_quota(int type, ino_t i_num, uid_t i_uid, gid_t i_gid, mode_t i_mode,
++static void add_to_quota(int type, ino_t i_num, uid_t i_uid, gid_t i_gid,
++			 __u32 project_id, mode_t i_mode,
+ 			 nlink_t i_nlink, loff_t i_space, int need_remember)
+ {
+ 	qid_t wanted;
+@@ -191,8 +192,10 @@ static void add_to_quota(int type, ino_t
+ 
+ 	if (type == USRQUOTA)
+ 		wanted = i_uid;
+-	else
++	else if (type == GRPQUOTA)
+ 		wanted = i_gid;
++	else
++		wanted = project_id;
+ 
+ 	if ((lptr = lookup_dquot(wanted, type)) == NODQUOT)
+ 		lptr = add_dquot(wanted, type);
+@@ -297,9 +300,10 @@ static inline void blit(const char *msg)
+ 
+ static void usage(void)
+ {
+-	printf(_("Utility for checking and repairing quota files.\n%s [-gucbfinvdmMR] [-F <quota-format>] filesystem|-a\n\n\
++	printf(_("Utility for checking and repairing quota files.\n%s [-guPcbfinvdmMR] [-F <quota-format>] filesystem|-a\n\n\
+ -u, --user                check user files\n\
+ -g, --group               check group files\n\
++-P, --project             check project files\n\
+ -c, --create-files        create new quota files\n\
+ -b, --backup              create backups of old quota files\n\
+ -f, --force               force check even if quotas are enabled\n\
+@@ -331,6 +335,7 @@ static void parse_options(int argcnt, ch
+ 		{ "debug", 0, NULL, 'd' },
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "interactive", 0, NULL, 'i' },
+ 		{ "use-first-dquot", 0, NULL, 'n' },
+ 		{ "force", 0, NULL, 'f' },
+@@ -342,7 +347,7 @@ static void parse_options(int argcnt, ch
+ 		{ NULL, 0, NULL, 0 }
+ 	};
+ 
+-	while ((ret = getopt_long(argcnt, argstr, "VhbcvugidnfF:mMRa", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argcnt, argstr, "VhbcvugPidnfF:mMRa", long_opts, NULL)) != -1) {
+   	        switch (ret) {
+ 		  case 'b':
+   		          flags |= FL_BACKUPS;
+@@ -353,6 +358,9 @@ static void parse_options(int argcnt, ch
+ 		  case 'u':
+ 			  uwant = 1;
+ 			  break;
++		  case 'P':
++			  pwant = 1;
++			  break;
+ 		  case 'd':
+ 			  flags |= FL_DEBUG;
+ 			  setlinebuf(stderr);
+@@ -398,7 +406,7 @@ static void parse_options(int argcnt, ch
+ 			usage();
+ 		}
+ 	}
+-	if (!(uwant | gwant))
++	if (!(uwant | gwant | pwant))
+ 		uwant = 1;
+ 	if ((argcnt == optind && !(flags & FL_ALL)) || (argcnt > optind && flags & FL_ALL)) {
+ 		fputs(_("Bad number of arguments.\n"), stderr);
+@@ -412,6 +420,43 @@ static void parse_options(int argcnt, ch
+ 		mntpoint = NULL;
+ }
+ 
++#define EXT4_IOC_GETPROJECT		_IOR('f', 19, long)
++#define EXT4_IOC_SETPROJECT		_IOW('f', 20, long)
++
++static int get_project_id(const char *name, __u32 *project)
++{
++	struct stat buf;
++	int fd;
++	int ret;
++	int projid;
++	int save_errno = 0;
++
++	if (stat(name, &buf) == -1)
++		return -1;
++
++	fd = open(name, O_RDONLY|O_NONBLOCK);
++	if (fd == -1)
++		return -1;
++
++	ret = ioctl(fd, EXT4_IOC_GETPROJECT, &projid);
++	if (ret < 0) {
++		save_errno = errno;
++		ret = -1;
++	}
++
++	close(fd);
++	if (save_errno)
++		errno = save_errno;
++	if (ret >= 0)
++		*project = projid;
++	/* Project ID is not supported */
++	if (errno == ENOTTY) {
++		*project = 0;
++		ret = 0;
++	}
++	return ret;
++}
++
+ #if defined(EXT2_DIRECT)
+ static int ext2_direct_scan(const char *device)
+ {
+@@ -425,6 +470,7 @@ static int ext2_direct_scan(const char *
+ 	ext2fs_inode_bitmap inode_dir_map;
+ 	uid_t uid;
+ 	gid_t gid;
++	__u32 project_id;
+ 
+ 	if ((error = ext2fs_open(device, 0, 0, 0, unix_io_manager, &fs))) {
+ 		errstr(_("error (%d) while opening %s\n"), (int)error, device);
+@@ -451,6 +497,11 @@ static int ext2_direct_scan(const char *
+ 		return -1;
+ 	}
+ 
++	if (get_project_id(NULL, &project_id) < 0) { // TODO: update me
++		errstr(_("Cannot get project id of directory %s\n"), strerror(errno));
++		return -1;
++	}
++
+ 	while (i_num) {
+ 		if ((i_num == EXT2_ROOT_INO ||
+ 		     i_num >= EXT2_FIRST_INO(fs->super)) &&
+@@ -463,11 +514,15 @@ static int ext2_direct_scan(const char *
+ 			if (inode.i_uid_high | inode.i_gid_high)
+ 				debug(FL_DEBUG, _("High uid detected.\n"));
+ 			if (ucheck)
+-				add_to_quota(USRQUOTA, i_num, uid, gid,
++				add_to_quota(USRQUOTA, i_num, uid, gid, project_id,
+ 					     inode.i_mode, inode.i_links_count,
+ 					     ((loff_t)inode.i_blocks) << 9, 0);
+ 			if (gcheck)
+-				add_to_quota(GRPQUOTA, i_num, uid, gid,
++				add_to_quota(GRPQUOTA, i_num, uid, gid, project_id,
++					     inode.i_mode, inode.i_links_count,
++					     ((loff_t)inode.i_blocks) << 9, 0);
++			if (pcheck)
++				add_to_quota(PRJQUOTA, i_num, uid, gid, project_id,
+ 					     inode.i_mode, inode.i_links_count,
+ 					     ((loff_t)inode.i_blocks) << 9, 0);
+ 			if (S_ISDIR(inode.i_mode))
+@@ -499,17 +554,30 @@ static int scan_dir(const char *pathname
+ 	loff_t qspace;
+ 	DIR *dp;
+ 	int ret;
++	__u32 project_id;
+ 
+ 	if (lstat(pathname, &st) == -1) {
+ 		errstr(_("Cannot stat directory %s: %s\n"), pathname, strerror(errno));
+ 		goto out;
+ 	}
++
++	if (get_project_id(pathname, &project_id) < 0) {
++		errstr(_("Cannot get project id of directory %s: %s\n"), pathname, strerror(errno));
++		goto out;
++	}
++
+ 	qspace = getqsize(pathname, &st);
+ 	if (ucheck)
+-		add_to_quota(USRQUOTA, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
++		add_to_quota(USRQUOTA, st.st_ino, st.st_uid, st.st_gid,
++			     project_id, st.st_mode,
+ 			     st.st_nlink, qspace, 0);
+ 	if (gcheck)
+-		add_to_quota(GRPQUOTA, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
++		add_to_quota(GRPQUOTA, st.st_ino, st.st_uid, st.st_gid,
++			     project_id, st.st_mode,
++			     st.st_nlink, qspace, 0);
++	if (pcheck)
++		add_to_quota(PRJQUOTA, st.st_ino, st.st_uid, st.st_gid,
++			     project_id, st.st_mode,
+ 			     st.st_nlink, qspace, 0);
+ 
+ 	if ((dp = opendir(pathname)) == (DIR *) NULL)
+@@ -545,12 +613,23 @@ static int scan_dir(const char *pathname
+ 			dir_stack = new_dir;
+ 		}
+ 		else {
++			if (get_project_id(de->d_name, &project_id) < 0) {
++				errstr(_("Cannot get project id of file %s: %s\n"),
++					de->d_name, strerror(errno));
++				goto out;
++			}
+ 			qspace = getqsize(de->d_name, &st);
+ 			if (ucheck)
+-				add_to_quota(USRQUOTA, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
++				add_to_quota(USRQUOTA, st.st_ino, st.st_uid,
++					     st.st_gid, project_id, st.st_mode,
+ 					     st.st_nlink, qspace, 1);
+ 			if (gcheck)
+-				add_to_quota(GRPQUOTA, st.st_ino, st.st_uid, st.st_gid, st.st_mode,
++				add_to_quota(GRPQUOTA, st.st_ino, st.st_uid,
++					     st.st_gid, project_id, st.st_mode,
++					     st.st_nlink, qspace, 1);
++			if (pcheck)
++				add_to_quota(PRJQUOTA, st.st_ino, st.st_uid,
++					     st.st_gid, project_id, st.st_mode,
+ 					     st.st_nlink, qspace, 1);
+ 			debug(FL_DEBUG, _("\tAdding %s size %lld ino %d links %d uid %u gid %u\n"), de->d_name,
+ 			      (long long)st.st_size, (int)st.st_ino, (int)st.st_nlink, (int)st.st_uid, (int)st.st_gid);
+@@ -894,8 +973,10 @@ static int sub_quota_file(struct mount_e
+ 	
+ 	if (qtype == USRQUOTA)
+ 		id = st.st_uid;
+-	else
++	else if (qtype == GRPQUOTA)
+ 		id = st.st_gid;
++	else /* TODO: project quota */
++		return 0;
+ 	if ((d = lookup_dquot(id, qtype)) == NODQUOT) {
+ 		errstr(_("Quota structure for %s owning quota file not present! Something is really wrong...\n"), _(type2name(qtype)));
+ 		return -1;
+@@ -934,7 +1015,10 @@ static int check_dir(struct mount_entry 
+ 	if (gcheck)
+ 		if (process_file(mnt, GRPQUOTA) < 0)
+ 			gcheck = 0;
+-	if (!ucheck && !gcheck)	/* Nothing to check? */
++	if (pcheck)
++		if (process_file(mnt, PRJQUOTA) < 0)
++			pcheck = 0;
++	if (!ucheck && !gcheck && !pcheck)	/* Nothing to check? */
+ 		return 0;
+ 	if (!(flags & FL_NOREMOUNT)) {
+ 		/* Now we try to remount fs read-only to prevent races when scanning filesystem */
+@@ -982,10 +1066,17 @@ start_scan:
+ 	if (ucheck) {
+ 		failed |= sub_quota_file(mnt, USRQUOTA, USRQUOTA);
+ 		failed |= sub_quota_file(mnt, USRQUOTA, GRPQUOTA);
++		failed |= sub_quota_file(mnt, USRQUOTA, PRJQUOTA);
+ 	}
+ 	if (gcheck) {
+ 		failed |= sub_quota_file(mnt, GRPQUOTA, USRQUOTA);
+ 		failed |= sub_quota_file(mnt, GRPQUOTA, GRPQUOTA);
++		failed |= sub_quota_file(mnt, GRPQUOTA, PRJQUOTA);
++	}
++	if (pcheck) {
++		failed |= sub_quota_file(mnt, PRJQUOTA, USRQUOTA);
++		failed |= sub_quota_file(mnt, PRJQUOTA, GRPQUOTA);
++		failed |= sub_quota_file(mnt, PRJQUOTA, PRJQUOTA);
+ 	}
+ 	debug(FL_DEBUG | FL_VERBOSE, _("Checked %d directories and %d files\n"), dirs_done,
+ 	      files_done);
+@@ -998,6 +1089,8 @@ start_scan:
+ 		failed |= dump_to_file(mnt, USRQUOTA);
+ 	if (gcheck)
+ 		failed |= dump_to_file(mnt, GRPQUOTA);
++	if (pcheck)
++		failed |= dump_to_file(mnt, PRJQUOTA);
+ out:
+ 	remove_list();
+ 	return failed;
+@@ -1026,7 +1119,7 @@ static int detect_filename_format(struct
+ 		else if ((option = str_hasmntopt(mnt->me_opts, MNTOPT_QUOTA)))
+ 			option += strlen(MNTOPT_QUOTA);
+ 	}
+-	else {
++	else if (type == GRPQUOTA) {
+ 		if ((option = str_hasmntopt(mnt->me_opts, MNTOPT_GRPQUOTA)))
+ 			option += strlen(MNTOPT_GRPQUOTA);
+ 		else if ((option = str_hasmntopt(mnt->me_opts, MNTOPT_GRPJQUOTA))) {
+@@ -1034,6 +1127,12 @@ static int detect_filename_format(struct
+ 			option += strlen(MNTOPT_GRPJQUOTA);
+ 		}
+ 	}
++	else {
++		if ((option = str_hasmntopt(mnt->me_opts, MNTOPT_PRJJQUOTA))) {
++			journal = 1;
++			option += strlen(MNTOPT_PRJJQUOTA);
++		}
++	}
+ 	if (!option)
+ 		die(2, _("Cannot find quota option on filesystem %s with quotas!\n"), mnt->me_dir);
+ 	if (journal) {
+@@ -1139,6 +1238,7 @@ static int check_all(void)
+ 	int checked = 0;
+ 	static int warned;
+ 	int failed = 0;
++	int type;
+ 
+ 	if (init_mounts_scan((flags & FL_ALL) ? 0 : 1, &mntpoint, 0) < 0)
+ 		die(2, _("Cannot initialize mountpoint scan.\n"));
+@@ -1158,10 +1258,21 @@ static int check_all(void)
+ 			gcheck = 1;
+ 		else
+ 			gcheck = 0;
+-		if (!ucheck && !gcheck)
++		if (pwant && me_hasquota(mnt, PRJQUOTA))
++			pcheck = 1;
++		else
++			pcheck = 0;
++		if (!ucheck && !gcheck && !pcheck)
+ 			continue;
+ 		if (cfmt == -1) {
+-			cfmt = detect_filename_format(mnt, ucheck ? USRQUOTA : GRPQUOTA);
++			if (ucheck) {
++				type = USRQUOTA;
++			} else if (gcheck) {
++				type = GRPQUOTA;
++			} else {
++				type = PRJQUOTA;
++			}
++			cfmt = detect_filename_format(mnt, type);
+ 			if (cfmt == -1) {
+ 				errstr(_("Cannot guess format from filename on %s. Please specify format on commandline.\n"),
+ 					mnt->me_devname);
+@@ -1174,6 +1285,7 @@ static int check_all(void)
+ 		if (flags & (FL_VERBOSE | FL_DEBUG) &&
+ 		    !str_hasmntopt(mnt->me_opts, MNTOPT_USRJQUOTA) &&
+ 		    !str_hasmntopt(mnt->me_opts, MNTOPT_GRPJQUOTA) &&
++		    !str_hasmntopt(mnt->me_opts, MNTOPT_PRJJQUOTA) &&
+ 		    !warned &&
+ 		    (!strcmp(mnt->me_type, MNTTYPE_EXT3) ||
+ 		     !strcmp(mnt->me_type, MNTTYPE_EXT4) ||
+Index: quota-tools.git/quotacheck_v2.c
+===================================================================
+--- quota-tools.git.orig/quotacheck_v2.c
++++ quota-tools.git/quotacheck_v2.c
+@@ -74,6 +74,7 @@ static int check_info(char *filename, in
+ 	filesize = lseek(fd, 0, SEEK_END);
+ 	if (check_blkref(freeblk, blocks) < 0 || dflags & ~V2_DQF_MASK ||
+ 	    check_blkref(freeent, blocks) < 0 || (filesize + QT_BLKSIZE - 1) >> QT_BLKSIZE_BITS != blocks) {
++	    	printf("%d %d %d %d %d\n", check_blkref(freeblk, blocks), dflags & ~V2_DQF_MASK, check_blkref(freeent, blocks), filesize + QT_BLKSIZE - 1, blocks);
+ 		errstr(_("WARNING - Quota file info was corrupted.\n"));
+ 		debug(FL_DEBUG, _("Size of file: %lu\nBlocks: %u Free block: %u Block with free entry: %u Flags: %x\n"),
+ 		      (unsigned long)filesize, blocks, freeblk, freeent, dflags);
+Index: quota-tools.git/quotaio.c
+===================================================================
+--- quota-tools.git.orig/quotaio.c
++++ quota-tools.git/quotaio.c
+@@ -77,7 +77,6 @@ struct quota_handle *init_io(struct moun
+ 		errstr(_("RPC quota format specified for non-NFS filesystem.\n"));
+ 		goto out_handle;
+ 	}
+-
+ 	if (!strcmp(mnt->me_type, MNTTYPE_XFS) ||	/* XFS filesystem? */
+ 	    !strcmp(mnt->me_type, MNTTYPE_GFS2)) {	/* XFS filesystem? */
+ 		if (fmt != -1 && fmt != QF_XFS) {	/* User wanted some other format? */
+Index: quota-tools.git/quotaon.8
+===================================================================
+--- quota-tools.git.orig/quotaon.8
++++ quota-tools.git/quotaon.8
+@@ -14,7 +14,7 @@ quotaon, quotaoff \- turn filesystem quo
+ .br
+ .B quotaon
+ [
+-.B \-avugfp
++.B \-avugPfp
+ ] [
+ .B \-F
+ .I format-name
+@@ -22,7 +22,7 @@ quotaon, quotaoff \- turn filesystem quo
+ .LP
+ .B quotaoff
+ [
+-.B \-vugp
++.B \-vugPp
+ ]
+ [
+ .B \-x
+@@ -53,7 +53,9 @@ directory of the specified filesystem an
+ .IR aquota.group
+ (for version 2 group quota), or
+ .IR quota.group
+-(for version 1 group quota).
++(for version 1 group quota),
++.IR aquota.project
++(for version 2 project quota).
+ .PP
+ XFS filesystems are a special case - XFS considers quota
+ information as filesystem metadata and uses journaling to provide
+@@ -109,6 +111,9 @@ Manipulate user quotas. This is the defa
+ .B -g, --group
+ Manipulate group quotas.
+ .TP
++.B -P, --project
++Manipulate project quotas.
++.TP
+ .B -p, --print-state
+ Instead of turning quotas on just print state of quotas (ie. whether. quota is on or off)
+ .TP
+@@ -148,6 +153,9 @@ Manipulate user quotas. This is the defa
+ .B -g, --group
+ Manipulate group quotas.
+ .TP
++.B -P, --project
++Manipulate project quotas.
++.TP
+ .B -p, --print-state
+ Instead of turning quotas off just print state of quotas (ie. whether. quota is on or off)
+ .TP
+@@ -201,7 +209,7 @@ This may be done while the filesystem is
+ .SH FILES
+ .PD 0
+ .TP 20
+-.B aquota.user or aquota.group
++.B aquota.user, aquota.group or aquota.project
+ quota file at the filesystem root (version 2 quota, non-XFS filesystems)
+ .TP
+ .B quota.user or quota.group
+Index: quota-tools.git/quotaon.c
+===================================================================
+--- quota-tools.git.orig/quotaon.c
++++ quota-tools.git/quotaon.c
+@@ -54,6 +54,7 @@
+ #define FL_ALL 8
+ #define FL_STAT 16
+ #define FL_OFF 32
++#define FL_PROJECT 64
+ 
+ static int flags, fmt = -1;
+ char *progname;
+@@ -63,12 +64,13 @@ static char *xarg = NULL;
+ 
+ static void usage(void)
+ {
+-	errstr(_("Usage:\n\t%s [-guvp] [-F quotaformat] [-x state] -a\n\
+-\t%s [-guvp] [-F quotaformat] [-x state] filesys ...\n\n\
++	errstr(_("Usage:\n\t%s [-guPvp] [-F quotaformat] [-x state] -a\n\
++\t%s [-guPvp] [-F quotaformat] [-x state] filesys ...\n\n\
+ -a, --all                %s\n\
+ -f, --off                turn quotas off\n\
+ -u, --user               operate on user quotas\n\
+ -g, --group              operate on group quotas\n\
++-P, --project            operate on project quotas\n\
+ -p, --print-state        print whether quotas are on or off\n\
+ -x, --xfs-command=cmd    perform XFS quota command\n\
+ -F, --format=formatname  operate on specific quota format\n\
+@@ -90,6 +92,7 @@ static void parse_options(int argcnt, ch
+ 		{ "verbose", 0, NULL, 'v' },
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "print-state", 0, NULL, 'p' },
+ 		{ "xfs-command", 1, NULL, 'x' },
+ 		{ "format", 1, NULL, 'F' },
+@@ -98,7 +101,7 @@ static void parse_options(int argcnt, ch
+ 		{ NULL, 0, NULL, 0 }
+ 	};
+ 
+-	while ((c = getopt_long(argcnt, argstr, "afvugpx:VF:h", long_opts, NULL)) != -1) {
++	while ((c = getopt_long(argcnt, argstr, "afvugpPx:VF:h", long_opts, NULL)) != -1) {
+ 		switch (c) {
+ 		  case 'a':
+ 			  flags |= FL_ALL;
+@@ -112,6 +115,9 @@ static void parse_options(int argcnt, ch
+ 		  case 'u':
+ 			  flags |= FL_USER;
+ 			  break;
++		  case 'P':
++			  flags |= FL_PROJECT;
++			  break;
+ 		  case 'v':
+ 			  flags |= FL_VERBOSE;
+ 			  break;
+@@ -141,8 +147,8 @@ static void parse_options(int argcnt, ch
+ 		fputs(_("Cannot turn on/off quotas via RPC.\n"), stderr);
+ 		exit(1);
+ 	}
+-	if (!(flags & (FL_USER | FL_GROUP)))
+-		flags |= FL_USER | FL_GROUP;
++	if (!(flags & (FL_USER | FL_GROUP | FL_PROJECT)))
++		flags |= FL_USER | FL_GROUP | FL_PROJECT;
+ 	if (!(flags & FL_ALL)) {
+ 		mntpoints = argstr + optind;
+ 		mntcnt = argcnt - optind;
+@@ -380,12 +386,16 @@ int main(int argc, char **argv)
+ 				errs += newstate(mnt, GRPQUOTA, xarg);
+ 			if (flags & FL_USER)
+ 				errs += newstate(mnt, USRQUOTA, xarg);
++			if (flags & FL_PROJECT)
++				errs += newstate(mnt, PRJQUOTA, xarg);
+ 		}
+ 		else {
+ 			if (flags & FL_GROUP)
+ 				errs += print_state(mnt, GRPQUOTA);
+ 			if (flags & FL_USER)
+ 				errs += print_state(mnt, USRQUOTA);
++			if (flags & FL_PROJECT)
++				errs += print_state(mnt, PRJQUOTA);
+ 		}
+ 	}
+ 	end_mounts_scan();
+Index: quota-tools.git/quotasync.1
+===================================================================
+--- quota-tools.git.orig/quotasync.1
++++ quota-tools.git/quotasync.1
+@@ -4,13 +4,13 @@ quotasync \- synchronize in-kernel file 
+ .SH SYNOPSIS
+ .B quotasync
+ [
+-.B -ug
++.B -ugP
+ ] 
+ .IR mount-point ...
+ .br
+ .B quotasync
+ [
+-.B -ug
++.B -ugP
+ ] 
+ .B -a
+ .br
+@@ -34,6 +34,9 @@ Synchronize user usage and limits.
+ .B -g, --group
+ Synchronize group usage and limits.
+ .TP
++.B -P, --project
++Synchronize project usage and limits.
++.TP
+ .B -a, --all
+ Synchronize usage and limits on all file systems. You have to specify this
+ option or to specify desired file systems.
+@@ -50,7 +53,7 @@ will terminate with non-zero exit code. 
+ .SH FILES
+ .PD 0
+ .TP 16
+-.B aquota.user " or " aquota.group
++.B aquota.user ", " aquota.group " or " aquota.project
+ Quota file at the file system root (version 2 quota, non-XFS/GFS2 file systems).
+ .TP 16
+ .B quota.user " or " quota.group
+Index: quota-tools.git/quotasync.c
+===================================================================
+--- quota-tools.git.orig/quotasync.c
++++ quota-tools.git/quotasync.c
+@@ -14,6 +14,7 @@
+ #define FL_USER 1		/* sync user quotas */
+ #define FL_GROUP 2		/* sync group quotas */
+ #define FL_ALL 4		/* sync quotas on all filesystems */
++#define FL_PROJECT 8		/* sync group quotas */
+ 
+ static int flags, fmt = -1;
+ static char **mnt;
+@@ -24,8 +25,8 @@ static void usage(int status)
+ {
+ 	printf(_(
+ "%1$s: Utility for syncing quotas.\n"
+-"Usage: %1$s [-ug] mount-point...\n"
+-"   or: %1$s [-ug] -a\n"
++"Usage: %1$s [-ugP] mount-point...\n"
++"   or: %1$s [-ugP] -a\n"
+ "   or: %1$s -h | -V\n"
+ "\n"
+ 		), progname);
+@@ -33,6 +34,7 @@ static void usage(int status)
+ "Options:\n"
+ "-u, --user     synchronize user quotas\n"
+ "-g, --group    synchronize group quotas\n"
++"-P, --project  synchronize project quotas\n"
+ "-a, --all      synchronize quotas for all mounted file systems\n"
+ "-h, --help     display this help message and exit\n"
+ "-V, --version  display version information and exit\n"
+@@ -48,13 +50,14 @@ static void parse_options(int argcnt, ch
+ 	struct option long_opts[] = {
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "all", 0, NULL, 'a' },
+ 		{ "version", 0, NULL, 'V' },
+ 		{ "help", 0, NULL, 'h' },
+ 		{ NULL, 0, NULL, 0 }
+ 	};
+ 
+-	while ((ret = getopt_long(argcnt, argstr, "ahugV", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argcnt, argstr, "ahugPV", long_opts, NULL)) != -1) {
+ 		switch (ret) {
+ 			case '?':
+ 				usage(EXIT_FAILURE);
+@@ -69,6 +72,9 @@ static void parse_options(int argcnt, ch
+ 			case 'g':
+ 				flags |= FL_GROUP;
+ 				break;
++			case 'P':
++				flags |= FL_PROJECT;
++				break;
+ 			case 'a':
+ 				flags |= FL_ALL;
+ 				break;
+@@ -141,5 +147,8 @@ int main(int argc, char **argv)
+ 	if (flags & FL_GROUP)
+ 		if (syncquotas(GRPQUOTA))
+ 			ret = EXIT_FAILURE;
++	if (flags & FL_PROJECT)
++		if (syncquotas(PRJQUOTA))
++			ret = EXIT_FAILURE;
+ 	return ret;
+ }
+Index: quota-tools.git/quotasys.c
+===================================================================
+--- quota-tools.git.orig/quotasys.c
++++ quota-tools.git/quotasys.c
+@@ -138,14 +138,35 @@ gid_t group2gid(char *name, int flag, in
+ }
+ 
+ /*
++ *	Convert project name to gid
++ */
++int project2pid(char *name, int flag, int *err)
++{
++	gid_t ret;
++	char *errch;
++
++	if (err)
++		*err = 0;
++	if (!flag) {
++		ret = strtoul(name, &errch, 0);
++		if (!*errch)		/* Is name number - we got directly sid? */
++			return ret;
++	}
++
++	return 0;
++}
++
++/*
+  *	Convert name to id
+  */
+ int name2id(char *name, int qtype, int flag, int *err)
+ {
+ 	if (qtype == USRQUOTA)
+ 		return user2uid(name, flag, err);
+-	else
++	else if (qtype == GRPQUOTA)
+ 		return group2gid(name, flag, err);
++	else
++		return project2pid(name, flag, err);
+ }
+ 
+ /*
+@@ -181,14 +202,25 @@ int gid2group(gid_t id, char *buf)
+ }
+ 
+ /*
++ *	Convert sid to name
++ */
++int pid2project(int id, char *buf)
++{
++	snprintf(buf, MAXNAMELEN, "#%u", (uint) id);
++	return 0;
++}
++
++/*
+  *	Convert id to user/groupname
+  */
+ int id2name(int id, int qtype, char *buf)
+ {
+ 	if (qtype == USRQUOTA)
+ 		return uid2user(id, buf);
+-	else
++	else if (qtype == GRPQUOTA)
+ 		return gid2group(id, buf);
++	else
++		return pid2project(id, buf);
+ }
+ 
+ /*
+@@ -640,6 +672,8 @@ static int hasquota(const char *dev, str
+ 		return QF_VFSUNKNOWN;
+ 	if ((type == GRPQUOTA) && (hasmntopt(mnt, MNTOPT_GRPQUOTA) || hasmntoptarg(mnt->mnt_opts, MNTOPT_GRPJQUOTA)))
+ 		return QF_VFSUNKNOWN;
++	if ((type == PRJQUOTA) && (hasmntopt(mnt, MNTOPT_PRJJQUOTA)))
++		return QF_VFSUNKNOWN;
+ 	if ((type == USRQUOTA) && hasmntopt(mnt, MNTOPT_QUOTA))
+ 		return QF_VFSUNKNOWN;
+ 	return -1;
+@@ -713,6 +747,13 @@ int get_qf_name(struct mount_entry *mnt,
+ 		sstrncpy(qfullname, mnt->me_dir, sizeof(qfullname));
+ 		sstrncat(qfullname, "/", sizeof(qfullname));
+ 	}
++	else if (type == PRJQUOTA && (option = str_hasmntopt(mnt->me_opts, MNTOPT_PRJJQUOTA))) {
++		pathname = option + strlen(MNTOPT_PRJJQUOTA);
++		if (*pathname == '=') {
++			has_quota_file_definition = 1;
++			pathname++;
++		}
++	}
+ 	else if (type == USRQUOTA && (option = str_hasmntopt(mnt->me_opts, MNTOPT_QUOTA))) {
+ 		pathname = option + strlen(MNTOPT_QUOTA);
+ 		if (*pathname == '=') {
+@@ -1135,12 +1176,13 @@ alloc:
+ 			free((char *)devname);
+ 			devname = sstrdup(loopdev);
+ 		}
+-
+ 		/* Further we are not interested in mountpoints without quotas and
+ 		   we don't want to touch them */
+ 		qfmt[USRQUOTA] = hasquota(devname, mnt, USRQUOTA, flags);
+ 		qfmt[GRPQUOTA] = hasquota(devname, mnt, GRPQUOTA, flags);
+-		if (qfmt[USRQUOTA] < 0 && qfmt[GRPQUOTA] < 0) {
++		qfmt[PRJQUOTA] = hasquota(devname, mnt, PRJQUOTA, flags);
++		if (qfmt[USRQUOTA] < 0 && qfmt[GRPQUOTA] < 0 &&
++		    qfmt[PRJQUOTA] < 0) {
+ 			free((char *)devname);
+ 			continue;
+ 		}
+Index: quota-tools.git/quotasys.h
+===================================================================
+--- quota-tools.git.orig/quotasys.h
++++ quota-tools.git/quotasys.h
+@@ -65,6 +65,9 @@ uid_t user2uid(char *, int flag, int *er
+ /* Convert groupname to gid */
+ gid_t group2gid(char *, int flag, int *err);
+ 
++/* Convert project name to gid */
++int project2pid(char *name, int flag, int *err);
++
+ /* Convert user/groupname to id */
+ int name2id(char *name, int qtype, int flag, int *err);
+ 
+@@ -74,6 +77,9 @@ int uid2user(uid_t, char *);
+ /* Convert gid to groupname */
+ int gid2group(gid_t, char *);
+ 
++/* Convert sid to name */
++int pid2project(int, char *);
++
+ /* Convert id to user/group name */
+ int id2name(int id, int qtype, char *buf);
+ 
+Index: quota-tools.git/repquota.8
+===================================================================
+--- quota-tools.git.orig/repquota.8
++++ quota-tools.git/repquota.8
+@@ -59,7 +59,7 @@ printed is '-'. The second character den
+ analogously.
+ 
+ .B repquota
+-has to translate ids of all users/groups to names (unless option
++has to translate ids of all users/groups/projects to names (unless option
+ .B -n
+ was specified) so it may take a while to
+ print all the information. To make translating as fast as possible
+@@ -125,6 +125,9 @@ Quota format with 64-bit quota limits an
+ .B -g, --group
+ Report quotas for groups.
+ .TP
++.B -P, --project
++Report quotas for projects.
++.TP
+ .B -u, --user
+ Report quotas for users. This is the default.
+ .TP
+@@ -142,7 +145,7 @@ Only the super-user may view quotas whic
+ .SH FILES
+ .PD 0
+ .TP 20
+-.BR aquota.user " or " aquota.group
++.BR aquota.user ", " aquota.group " or " aquota.project
+ quota file at the filesystem root (version 2 quota, non-XFS filesystems)
+ .TP
+ .BR quota.user " or " quota.group
+Index: quota-tools.git/repquota.c
+===================================================================
+--- quota-tools.git.orig/repquota.c
++++ quota-tools.git/repquota.c
+@@ -37,6 +37,7 @@
+ #define FL_NOCACHE 128	/* Don't cache dquots before resolving */
+ #define FL_NOAUTOFS 256	/* Ignore autofs mountpoints */
+ #define FL_RAWGRACE 512	/* Print grace times in seconds since epoch */
++#define FL_PROJECT 1024
+ 
+ static int flags, fmt = -1, ofmt = QOF_DEFAULT;
+ static char **mnt;
+@@ -51,6 +52,7 @@ static void usage(void)
+ -v, --verbose               display also users/groups without any usage\n\
+ -u, --user                  display information about users\n\
+ -g, --group                 display information about groups\n\
++-P, --Project               display information about projects\n\
+ -s, --human-readable        show numbers in human friendly units (MB, GB, ...)\n\
+ -t, --truncate-names        truncate names to 9 characters\n\
+ -p, --raw-grace             print grace time in seconds since epoch\n\
+@@ -77,6 +79,7 @@ static void parse_options(int argcnt, ch
+ 		{ "verbose", 0, NULL, 'v' },
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "help", 0, NULL, 'h' },
+ 		{ "truncate-names", 0, NULL, 't' },
+ 		{ "raw-grace", 0, NULL, 'p' },
+@@ -90,7 +93,7 @@ static void parse_options(int argcnt, ch
+ 		{ NULL, 0, NULL, 0 }
+ 	};
+ 
+-	while ((ret = getopt_long(argcnt, argstr, "VavughtspncCiFO:", long_opts, NULL)) != -1) {
++	while ((ret = getopt_long(argcnt, argstr, "VavugPhtspncCiFO:", long_opts, NULL)) != -1) {
+ 		switch (ret) {
+ 			case '?':
+ 			case 'h':
+@@ -104,6 +107,9 @@ static void parse_options(int argcnt, ch
+ 			case 'g':
+ 				flags |= FL_GROUP;
+ 				break;
++			case 'P':
++				flags |= FL_PROJECT;
++				break;
+ 			case 'v':
+ 				flags |= FL_VERBOSE;
+ 				break;
+Index: quota-tools.git/setquota.c
+===================================================================
+--- quota-tools.git.orig/setquota.c
++++ quota-tools.git/setquota.c
+@@ -36,6 +36,7 @@
+ #define FL_NUMNAMES 256
+ #define FL_NO_MIXED_PATHS 512
+ #define FL_CONTINUE_BATCH 1024
++#define FL_PROJECT 2048
+ 
+ static int flags, fmt = -1;
+ static char **mnt;
+@@ -53,19 +54,20 @@ static void usage(void)
+ 	char *ropt = "";
+ #endif
+ 	errstr(_("Usage:\n\
+-  setquota [-u|-g] %1$s[-F quotaformat] <user|group>\n\
++  setquota [-u|-g|-P] %1$s[-F quotaformat] <user|group|project>\n\
+ \t<block-softlimit> <block-hardlimit> <inode-softlimit> <inode-hardlimit> -a|<filesystem>...\n\
+-  setquota [-u|-g] %1$s[-F quotaformat] <-p protouser|protogroup> <user|group> -a|<filesystem>...\n\
+-  setquota [-u|-g] %1$s[-F quotaformat] -b [-c] -a|<filesystem>...\n\
+-  setquota [-u|-g] [-F quotaformat] -t <blockgrace> <inodegrace> -a|<filesystem>...\n\
+-  setquota [-u|-g] [-F quotaformat] <user|group> -T <blockgrace> <inodegrace> -a|<filesystem>...\n\n\
++  setquota [-u|-g|-P] %1$s[-F quotaformat] <-p protouser|protogroup|protoproject> <user|group|project> -a|<filesystem>...\n\
++  setquota [-u|-g|-P] %1$s[-F quotaformat] -b [-c] -a|<filesystem>...\n\
++  setquota [-u|-g|-P] [-F quotaformat] -t <blockgrace> <inodegrace> -a|<filesystem>...\n\
++  setquota [-u|-g|-P] [-F quotaformat] <user|group|project> -T <blockgrace> <inodegrace> -a|<filesystem>...\n\n\
+ -u, --user                 set limits for user\n\
+ -g, --group                set limits for group\n\
++-P, --project              set limits for project\n\
+ -a, --all                  set limits for all filesystems\n\
+     --always-resolve       always try to resolve name, even if is\n\
+                            composed only of digits\n\
+ -F, --format=formatname    operate on specific quota format\n\
+--p, --prototype=protoname  copy limits from user/group\n\
++-p, --prototype=protoname  copy limits from user/group/project\n\
+ -b, --batch                read limits from standard input\n\
+ -c, --continue-batch       continue in input processing in case of an error\n"), ropt);
+ #if defined(RPC_SETQUOTA)
+@@ -73,7 +75,7 @@ static void usage(void)
+ -m, --no-mixed-pathnames      trim leading slashes from NFSv4 mountpoints\n"), stderr);
+ #endif
+ 	fputs(_("-t, --edit-period          edit grace period\n\
+--T, --edit-times           edit grace times for user/group\n\
++-T, --edit-times           edit grace times for user/group/project\n\
+ -h, --help                 display this help text and exit\n\
+ -V, --version              display version information and exit\n\n"), stderr);
+ 	fprintf(stderr, _("Bugs to: %s\n"), MY_EMAIL);
+@@ -126,6 +128,8 @@ static inline int flag2type(int flags)
+ 		return USRQUOTA;
+ 	if (flags & FL_GROUP)
+ 		return GRPQUOTA;
++	if (flags & FL_PROJECT)
++		return PRJQUOTA;
+ 	return -1;
+ }
+ 
+@@ -134,15 +138,16 @@ static void parse_options(int argcnt, ch
+ {
+ 	int ret, otherargs;
+ 	char *protoname = NULL;
+-
++	int type = 0;
+ #ifdef RPC_SETQUOTA
+-	char *opts = "ghp:urmVF:taTbc";
++	char *opts = "ghp:uPrmVF:taTbc";
+ #else
+-	char *opts = "ghp:uVF:taTbc";
++	char *opts = "ghp:uPVF:taTbc";
+ #endif
+ 	struct option long_opts[] = {
+ 		{ "user", 0, NULL, 'u' },
+ 		{ "group", 0, NULL, 'g' },
++		{ "project", 0, NULL, 'P' },
+ 		{ "prototype", 1, NULL, 'p' },
+ #ifdef RPC_SETQUOTA
+ 		{ "remote", 0, NULL, 'r' },
+@@ -171,6 +176,9 @@ static void parse_options(int argcnt, ch
+ 		  case 'u':
+ 			  flags |= FL_USER;
+ 			  break;
++		  case 'P':
++			  flags |= FL_PROJECT;
++			  break;
+ 		  case 'p':
+ 			  flags |= FL_PROTO;
+ 			  protoname = optarg;
+@@ -208,8 +216,14 @@ static void parse_options(int argcnt, ch
+ 			  exit(0);
+ 		}
+ 	}
+-	if (flags & FL_USER && flags & FL_GROUP) {
+-		errstr(_("Group and user quotas cannot be used together.\n"));
++	if (flags & FL_USER)
++		type++;
++	if (flags & FL_GROUP)
++		type++;
++	if (flags & FL_PROJECT)
++		type++;
++	if (type > 1) {
++		errstr(_("Group/user/project quotas cannot be used together.\n"));
+ 		usage();
+ 	}
+ 	if (flags & FL_PROTO && flags & FL_GRACE) {
+@@ -247,7 +261,7 @@ static void parse_options(int argcnt, ch
+ 		errstr(_("Bad number of arguments.\n"));
+ 		usage();
+ 	}
+-	if (!(flags & (FL_USER | FL_GROUP)))
++	if (!(flags & (FL_USER | FL_GROUP | FL_PROJECT)))
+ 		flags |= FL_USER;
+ 	if (!(flags & (FL_GRACE | FL_BATCH))) {
+ 		id = name2id(argstr[optind++], flag2type(flags), !!(flags & FL_NUMNAMES), NULL);
+Index: quota-tools.git/setquota.8
+===================================================================
+--- quota-tools.git.orig/setquota.8
++++ quota-tools.git/setquota.8
+@@ -107,9 +107,9 @@ setquota \- set disk quotas
+ .IX  "filesystem"  "setquota command"  ""  "\fLsetquota\fP \(em set disk quotas"
+ .B setquota
+ is a command line quota editor.
+-The filesystem, user/group name and new quotas for this
++The filesystem, user/group/project name and new quotas for this
+ filesystem can be specified on the command line. Note that if a number is
+-given in the place of a user/group name it is treated as an UID/GID.
++given in the place of a user/group/project name it is treated as an UID/GID/project ID.
+ .TP
+ .B -r, --remote
+ Edit also remote quota use rpc.rquotad on remote server to set quota. This
+@@ -146,14 +146,18 @@ Set user quotas for named user. This is 
+ .B -g, --group
+ Set group quotas for named group.
+ .TP
++.B -P, --project
++Set project quotas for named project.
++.TP
+ .B -p, --prototype=\f2protoname\f1
+-Use quota settings of user or group
++Use quota settings of user, group or project
+ .I protoname
+-to set the quota for the named user or group.
++to set the quota for the named user, group or project.
+ .TP
+ .B --always-resolve
+-Always try to translate user / group name to uid / gid even if the name
+-is composed of digits only.
++Always try to translate user / group / project name to
++uid / gid / project ID even if the name is composed of
++digits only.
+ .TP
+ .B -b, --batch
+ Read information to set from stdin (input format is
+@@ -164,14 +168,14 @@ Read information to set from stdin (inpu
+ If parsing of an input line in batch mode fails, continue with processing the next line.
+ .TP
+ .B -t, --edit-period
+-Set grace times for users/groups. Times
++Set grace times for users/groups/projects. Times
+ .B block-grace
+ and
+ .B inode-grace
+ are specified in seconds.
+ .TP
+ .B -T, --edit-times
+-Alter times for individual user/group when softlimit is enforced. Times
++Alter times for individual user/group/project when softlimit is enforced. Times
+ .B block-grace
+ and
+ .B inode-grace
+@@ -202,7 +206,7 @@ Only the super-user may edit quotas.
+ .SH FILES
+ .PD 0
+ .TP 20
+-.B aquota.user or aquota.group
++.B aquota.user, aquota.group or aquota.project
+ quota file at the filesystem root (version 2 quota, non-XFS filesystems)
+ .TP
+ .B quota.user or quota.group

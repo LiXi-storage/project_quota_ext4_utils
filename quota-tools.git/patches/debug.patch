@@ -1,0 +1,49 @@
+Index: quota-tools.git/quotasys.c
+===================================================================
+--- quota-tools.git.orig/quotasys.c
++++ quota-tools.git/quotasys.c
+@@ -659,7 +659,9 @@ static int hasquota(const char *dev, str
+ 	if (!strcmp(mnt->mnt_type, MNTTYPE_EXT4)) {
+ 		struct if_dqinfo kinfo;
+ 
++		errstr("XXXX quotactl in for %s\n", dev);
+ 		if (quotactl(QCMD(Q_GETINFO, type), dev, 0, (void *)&kinfo) == 0) {
++			errstr("XXXX quotactl out fir %s\n", dev);
+ 			if (kinfo.dqi_flags & DQF_SYS_FILE)
+ 				return QF_META;
+ 		}
+@@ -668,6 +670,11 @@ static int hasquota(const char *dev, str
+ 	if (nfs_fstype(mnt->mnt_type))
+ 		return QF_RPC;
+ 
++	if (type == PRJQUOTA) {
++	               errstr("XXXX hasmntopt(MNTOPT_PRJJQUOTA) = %dmnt->mnt_opts = %s, MNTOPT_PRJJQUOTA = %s\n",
++                      hasmntopt(mnt, MNTOPT_PRJJQUOTA), mnt->mnt_opts, MNTOPT_PRJJQUOTA);
++       }
++
+ 	if ((type == USRQUOTA) && (hasmntopt(mnt, MNTOPT_USRQUOTA) || hasmntoptarg(mnt->mnt_opts, MNTOPT_USRJQUOTA)))
+ 		return QF_VFSUNKNOWN;
+ 	if ((type == GRPQUOTA) && (hasmntopt(mnt, MNTOPT_GRPQUOTA) || hasmntoptarg(mnt->mnt_opts, MNTOPT_GRPJQUOTA)))
+@@ -1389,6 +1396,10 @@ restart:
+ 		return 0;
+ 	sd = check_dirs + act_checked;
+ 	for (i = 0; i < mnt_entries_cnt; i++) {
++		errstr("XXXXX dir %d, dev %d, name %s, ino %d, dev[%d] = %d, ino %d, name %s\n",
++		       sd->sd_dir, sd->sd_dev, sd->sd_name, sd->sd_ino, i,
++		       mnt_entries[i].me_dev, mnt_entries[i].me_ino,
++		       mnt_entries[i].me_devname);
+ 		if (sd->sd_dir) {
+ 			if (sd->sd_dev == mnt_entries[i].me_dev && sd->sd_ino == mnt_entries[i].me_ino)
+ 				break;
+Index: quota-tools.git/quotacheck.c
+===================================================================
+--- quota-tools.git.orig/quotacheck.c
++++ quota-tools.git/quotacheck.c
+@@ -1262,6 +1262,7 @@ static int check_all(void)
+ 			pcheck = 1;
+ 		else
+ 			pcheck = 0;
++		errstr("dev %s, prjquota %d, has prjquota %d\n", mnt->me_devname, pcheck, me_hasquota(mnt, PRJQUOTA));
+ 		if (!ucheck && !gcheck && !pcheck)
+ 			continue;
+ 		if (cfmt == -1) {
